@@ -5,6 +5,10 @@ pipeline {
         DOCKER_BUILDKIT = 1 // Enable Docker BuildKit for faster builds
     }
 
+    tools {
+        docker 'docker'  // Ensure Docker is installed
+    }
+
     stages {
         stage('Clone Repository') {
             steps {
@@ -14,7 +18,13 @@ pipeline {
 
         stage('Build Services') {
             steps {
-                sh 'docker-compose build --parallel'
+                script {
+                    def composeExists = sh(script: 'command -v docker-compose || echo "not found"', returnStdout: true).trim()
+                    if (composeExists == "not found") {
+                        error "ERROR: docker-compose not found! Install it before running the pipeline."
+                    }
+                    sh 'docker-compose build --parallel'
+                }
             }
         }
 
@@ -44,33 +54,34 @@ pipeline {
                         def dbHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' ${dbId}", returnStdout: true).trim()
 
                         if (redisHealth == "healthy" && dbHealth == "healthy") {
-                            echo "All services are healthy!"
+                            echo "✅ All services are healthy!"
                             healthy = true
                             break
                         }
 
-                        echo "Waiting for services to be healthy... Attempt ${retryCount + 1}/${maxRetries}"
+                        echo "⌛ Waiting for services to be healthy... Attempt ${retryCount + 1}/${maxRetries}"
                         sleep 10
                         retryCount++
                     }
 
                     if (!healthy) {
-                        error "Services did not become healthy in time!"
+                        error "❌ ERROR: Services did not become healthy in time!"
                     }
                 }
             }
         }
     }
 
-  post {
-    always {
-        script {
-            def composeExists = sh(script: 'command -v docker-compose || echo "not found"', returnStdout: true).trim()
-            if (composeExists != "not found") {
-                echo "Cleaning up Docker resources..."
-                sh 'docker-compose down --volumes'
-            } else {
-                echo "WARNING: docker-compose not found. Skipping cleanup!"
+    post {
+        always {
+            script {
+                def composeExists = sh(script: 'command -v docker-compose || echo "not found"', returnStdout: true).trim()
+                if (composeExists != "not found") {
+                    echo "🧹 Cleaning up Docker resources..."
+                    sh 'docker-compose down --volumes'
+                } else {
+                    echo "⚠️ WARNING: docker-compose not found. Skipping cleanup!"
+                }
             }
         }
     }
