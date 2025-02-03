@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    environment {
+        DOCKER_BUILDKIT = 1 // Enable Docker BuildKit for faster builds
+    }
+
     stages {
         stage('Clone Repository') {
             steps {
@@ -10,13 +14,13 @@ pipeline {
 
         stage('Build Services') {
             steps {
-                sh 'docker-compose build'
+                sh 'docker-compose build --parallel'
             }
         }
 
         stage('Start Services') {
             steps {
-                sh 'docker-compose up -d'
+                sh 'docker-compose up -d --remove-orphans'
             }
         }
 
@@ -26,11 +30,19 @@ pipeline {
                     def maxRetries = 5
                     def retryCount = 0
                     def healthy = false
-                    
+
                     while (retryCount < maxRetries) {
-                        def redisHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' $(docker-compose ps -q redis)", returnStdout: true).trim()
-                        def dbHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' $(docker-compose ps -q db)", returnStdout: true).trim()
-                        
+                        def redisId = sh(script: "docker-compose ps -q redis", returnStdout: true).trim()
+                        def dbId = sh(script: "docker-compose ps -q db", returnStdout: true).trim()
+
+                        if (!redisId || !dbId) {
+                            echo "Error: Redis or DB container is not running!"
+                            break
+                        }
+
+                        def redisHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' ${redisId}", returnStdout: true).trim()
+                        def dbHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' ${dbId}", returnStdout: true).trim()
+
                         if (redisHealth == "healthy" && dbHealth == "healthy") {
                             echo "All services are healthy!"
                             healthy = true
@@ -46,3 +58,17 @@ pipeline {
                         error "Services did not become healthy in time!"
                     }
                 }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Cleaning up Docker resources..."
+            sh 'docker-compose down --volumes'
+        }
+        failure {
+            echo "Pipeline failed! Check logs for errors."
+        }
+    }
+}
