@@ -62,13 +62,16 @@ pipeline {
         }
     }
 
-    post {
-        always {
-            echo "Cleaning up Docker resources..."
-            sh 'docker-compose down --volumes'
-        }
-        failure {
-            echo "Pipeline failed! Check logs for errors."
+  post {
+    always {
+        script {
+            def composeExists = sh(script: 'command -v docker-compose || echo "not found"', returnStdout: true).trim()
+            if (composeExists != "not found") {
+                echo "Cleaning up Docker resources..."
+                sh 'docker-compose down --volumes'
+            } else {
+                echo "WARNING: docker-compose not found. Skipping cleanup!"
+            }
         }
     }
 }
