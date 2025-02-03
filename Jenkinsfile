@@ -1,36 +1,23 @@
 pipeline {
     agent any
 
-    environment {
-        DOCKER_BUILDKIT = 1 // Enable Docker BuildKit for faster builds
-    }
-
-    tools {
-        docker 'docker'  // Ensure Docker is installed
-    }
-
     stages {
         stage('Clone Repository') {
             steps {
-                git branch: 'main', url: 'https://github.com/charlino/example-voting-app.git'
+                git branch: 'main', url: 'https://github.com/Marypearl/example-voting-app.git'
             }
         }
 
         stage('Build Services') {
             steps {
-                script {
-                    def composeExists = sh(script: 'command -v docker-compose || echo "not found"', returnStdout: true).trim()
-                    if (composeExists == "not found") {
-                        error "ERROR: docker-compose not found! Install it before running the pipeline."
-                    }
-                    sh 'docker-compose build --parallel'
-                }
+                // Use the official Docker Compose image to invoke docker-compose commands
+                sh 'docker run --rm -v $(pwd):/workspace -w /workspace docker/compose:1.29.2 -f docker-compose.yml build'
             }
         }
 
         stage('Start Services') {
             steps {
-                sh 'docker-compose up -d --remove-orphans'
+                sh 'docker run --rm -v $(pwd):/workspace -w /workspace docker/compose:1.29.2 -f docker-compose.yml up -d'
             }
         }
 
@@ -40,49 +27,46 @@ pipeline {
                     def maxRetries = 5
                     def retryCount = 0
                     def healthy = false
-
+                    
                     while (retryCount < maxRetries) {
-                        def redisId = sh(script: "docker-compose ps -q redis", returnStdout: true).trim()
-                        def dbId = sh(script: "docker-compose ps -q db", returnStdout: true).trim()
-
-                        if (!redisId || !dbId) {
-                            echo "Error: Redis or DB container is not running!"
-                            break
-                        }
-
-                        def redisHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' ${redisId}", returnStdout: true).trim()
-                        def dbHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' ${dbId}", returnStdout: true).trim()
-
+                        def redisHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' \$(docker-compose ps -q redis)", returnStdout: true).trim()
+                        def dbHealth = sh(script: "docker inspect --format='{{.State.Health.Status}}' \$(docker-compose ps -q db)", returnStdout: true).trim()
+                        
                         if (redisHealth == "healthy" && dbHealth == "healthy") {
-                            echo "✅ All services are healthy!"
+                            echo "All services are healthy!"
                             healthy = true
                             break
                         }
 
-                        echo "⌛ Waiting for services to be healthy... Attempt ${retryCount + 1}/${maxRetries}"
+                        echo "Waiting for services to be healthy... Attempt ${retryCount + 1}/${maxRetries}"
                         sleep 10
                         retryCount++
                     }
 
                     if (!healthy) {
-                        error "❌ ERROR: Services did not become healthy in time!"
+                        error "Services did not become healthy in time!"
                     }
                 }
             }
         }
-    }
 
-    post {
-        always {
-            script {
-                def composeExists = sh(script: 'command -v docker-compose || echo "not found"', returnStdout: true).trim()
-                if (composeExists != "not found") {
-                    echo "🧹 Cleaning up Docker resources..."
-                    sh 'docker-compose down --volumes'
-                } else {
-                    echo "⚠️ WARNING: docker-compose not found. Skipping cleanup!"
-                }
+        stage('Run Seed Data (Optional)') {
+            when {
+                expression { params.RUN_SEED }
+            }
+            steps {
+                sh 'docker run --rm -v $(pwd):/workspace -w /workspace docker/compose:1.29.2 -f docker-compose.yml --profile seed up -d'
             }
         }
+
+        stage('Clean Up') {
+            steps {
+                sh 'docker run --rm -v $(pwd):/workspace -w /workspace docker/compose:1.29.2 -f docker-compose.yml down'
+            }
+        }
+    }
+
+    parameters {
+        booleanParam(name: 'RUN_SEED', defaultValue: false, description: 'Run the seed data container')
     }
 }
